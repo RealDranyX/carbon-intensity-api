@@ -1,14 +1,4 @@
-const express = require('express');
 const https = require('https');
-const app = express();
-const port = process.env.PORT || 3000;
-
-// Enable CORS
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-  next();
-});
 
 // Cache for the data
 let carbonData = null;
@@ -49,26 +39,31 @@ async function getCarbonData() {
     try {
       carbonData = await fetchCarbonData();
       lastFetched = now;
-      console.log('Data refreshed from source');
     } catch (error) {
-      console.error('Error fetching data:', error);
       if (!carbonData) {
         throw error;
       }
-      // Use cached data if fetch fails
     }
   }
   
   return carbonData;
 }
 
-// Main API endpoint
-app.get('/api/carbon-intensity', async (req, res) => {
+export default async function handler(req, res) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
   try {
     let data = await getCarbonData();
     let filteredData = [...data];
     
-    // Country filter (supports multiple countries separated by comma)
+    // Country filter
     if (req.query.country) {
       const countries = req.query.country.split(',').map(c => c.trim().toLowerCase());
       filteredData = filteredData.filter(item => 
@@ -78,7 +73,7 @@ app.get('/api/carbon-intensity', async (req, res) => {
       );
     }
     
-    // Country code filter (ISO codes)
+    // Country code filter
     if (req.query.country_code) {
       const codes = req.query.country_code.split(',').map(c => c.trim().toUpperCase());
       filteredData = filteredData.filter(item => 
@@ -86,7 +81,7 @@ app.get('/api/carbon-intensity', async (req, res) => {
       );
     }
     
-    // Minimum carbon intensity filter
+    // Intensity filters
     if (req.query.min_intensity) {
       const minIntensity = parseFloat(req.query.min_intensity);
       if (!isNaN(minIntensity)) {
@@ -96,7 +91,6 @@ app.get('/api/carbon-intensity', async (req, res) => {
       }
     }
     
-    // Maximum carbon intensity filter
     if (req.query.max_intensity) {
       const maxIntensity = parseFloat(req.query.max_intensity);
       if (!isNaN(maxIntensity)) {
@@ -106,7 +100,7 @@ app.get('/api/carbon-intensity', async (req, res) => {
       }
     }
     
-    // Search in country names
+    // Search
     if (req.query.search) {
       const searchTerm = req.query.search.toLowerCase();
       filteredData = filteredData.filter(item => 
@@ -114,7 +108,7 @@ app.get('/api/carbon-intensity', async (req, res) => {
       );
     }
     
-    // Sort options
+    // Sort
     if (req.query.sort) {
       const sortField = req.query.sort;
       const sortOrder = req.query.order === 'desc' ? -1 : 1;
@@ -138,7 +132,6 @@ app.get('/api/carbon-intensity', async (req, res) => {
     
     const paginatedData = filteredData.slice(startIndex, endIndex);
     
-    // Response
     res.json({
       success: true,
       total: filteredData.length,
@@ -165,110 +158,4 @@ app.get('/api/carbon-intensity', async (req, res) => {
       message: error.message
     });
   }
-});
-
-// Get all available countries
-app.get('/api/countries', async (req, res) => {
-  try {
-    const data = await getCarbonData();
-    const countries = [...new Set(data.map(item => item.country).filter(Boolean))].sort();
-    
-    res.json({
-      success: true,
-      total: countries.length,
-      countries: countries
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch countries',
-      message: error.message
-    });
-  }
-});
-
-// API documentation endpoint
-app.get('/api/docs', (req, res) => {
-  res.json({
-    title: 'Carbon Intensity API',
-    version: '1.0.0',
-    description: 'API for filtering carbon intensity data by country and other parameters',
-    endpoints: {
-      '/api/carbon-intensity': {
-        method: 'GET',
-        description: 'Get carbon intensity data with optional filters',
-        parameters: {
-          country: 'Filter by country name (supports comma-separated values)',
-          country_code: 'Filter by country code (supports comma-separated values)',
-          min_intensity: 'Minimum carbon intensity value',
-          max_intensity: 'Maximum carbon intensity value',
-          search: 'Search in country names',
-          sort: 'Sort by field (country, carbon_intensity, etc.)',
-          order: 'Sort order: asc or desc (default: asc)',
-          page: 'Page number for pagination (default: 1)',
-          limit: 'Number of results per page'
-        },
-        examples: [
-          '/api/carbon-intensity?country=Germany',
-          '/api/carbon-intensity?country=United States,Canada',
-          '/api/carbon-intensity?min_intensity=200&max_intensity=500',
-          '/api/carbon-intensity?search=united&sort=carbon_intensity&order=desc',
-          '/api/carbon-intensity?page=1&limit=10'
-        ]
-      },
-      '/api/countries': {
-        method: 'GET',
-        description: 'Get list of all available countries'
-      }
-    }
-  });
-});
-
-// Health check
-app.get('/health', async (req, res) => {
-  try {
-    const data = await getCarbonData();
-    res.json({
-      status: 'OK',
-      timestamp: new Date().toISOString(),
-      total_records: data.length,
-      last_updated: new Date(lastFetched).toISOString()
-    });
-  } catch (error) {
-    res.status(503).json({
-      status: 'ERROR',
-      timestamp: new Date().toISOString(),
-      error: error.message
-    });
-  }
-});
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: 'Carbon Intensity API',
-    version: '1.0.0',
-    documentation: '/api/docs',
-    health: '/health',
-    endpoints: {
-      carbon_data: '/api/carbon-intensity',
-      countries: '/api/countries'
-    },
-    example_usage: [
-      `${req.protocol}://${req.get('host')}/api/carbon-intensity?country=Germany`,
-      `${req.protocol}://${req.get('host')}/api/carbon-intensity?min_intensity=100&limit=5`,
-      `${req.protocol}://${req.get('host')}/api/countries`
-    ]
-  });
-});
-
-app.listen(port, () => {
-  console.log(`🚀 Carbon Intensity API running on port ${port}`);
-  console.log(`📖 Documentation: http://localhost:${port}/api/docs`);
-  console.log(`🏥 Health check: http://localhost:${port}/health`);
-  console.log('\n📝 Example requests:');
-  console.log(`   http://localhost:${port}/api/carbon-intensity?country=Germany`);
-  console.log(`   http://localhost:${port}/api/carbon-intensity?country=United States,Canada`);
-  console.log(`   http://localhost:${port}/api/carbon-intensity?min_intensity=200&sort=carbon_intensity`);
-  console.log(`   http://localhost:${port}/api/countries`);
-});
+}
